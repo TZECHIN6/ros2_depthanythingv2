@@ -19,6 +19,7 @@ class DepthToPointCloud(Node):
         self.declare_parameter("camera_info_topic", "/logi_camera/camera_info")
         self.declare_parameter("pointcloud_topic", "/logi_camera/pointcloud")
         self.declare_parameter("save_to_ply", False)
+        self.declare_parameter("model_size", "Base")  # Large, Base, Small
 
         self.image_topic = (
             self.get_parameter("image_topic").get_parameter_value().string_value
@@ -32,6 +33,19 @@ class DepthToPointCloud(Node):
         self.save_to_ply = (
             self.get_parameter("save_to_ply").get_parameter_value().bool_value
         )
+        self.model_size = (
+            self.get_parameter("model_size").get_parameter_value().string_value
+        )
+
+        # Validate model_size
+        valid_model_sizes = ["Base", "Small", "Large"]
+        if self.model_size not in valid_model_sizes:
+            self.get_logger().error(
+                f"Invalid model_size parameter: '{self.model_size}'. "
+                f"Valid options are: {valid_model_sizes}. Node will not start."
+            )
+            rclpy.shutdown()
+            return
 
         self.image_subscriber = self.create_subscription(
             Image, self.image_topic, self.image_callback, 10
@@ -48,7 +62,7 @@ class DepthToPointCloud(Node):
         self.get_logger().info(f"Using device: {self.device}")
 
         # Load the model and processor
-        model_id = "depth-anything/Depth-Anything-V2-Metric-Indoor-Large-hf"
+        model_id = f"depth-anything/Depth-Anything-V2-Metric-Indoor-{self.model_size}-hf"
         self.image_processor = AutoImageProcessor.from_pretrained(
             model_id,
             do_resize=True,  # Enable resizing
@@ -66,6 +80,7 @@ class DepthToPointCloud(Node):
             depth_estimation_type="metric",
             max_depth=20.0,
         )
+        self.get_logger().info(f"Model loaded successfully. Model ID: {model_id}")
 
         self.bridge = CvBridge()
         self.camera_info = None
