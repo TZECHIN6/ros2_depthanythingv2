@@ -168,7 +168,7 @@ class DepthToPointCloud(Node):
         # Create PointCloud2 message
         pointcloud_msg = PointCloud2()
         pointcloud_msg.header.stamp = self.get_clock().now().to_msg()
-        pointcloud_msg.header.frame_id = "camera_frame"
+        pointcloud_msg.header.frame_id = self.camera_info.header.frame_id
         pointcloud_msg.height = 1
         pointcloud_msg.width = points.shape[0]
         pointcloud_msg.is_dense = True
