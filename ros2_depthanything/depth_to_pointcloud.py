@@ -1,6 +1,7 @@
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image, CameraInfo, PointField, PointCloud2
+from rosgraph_msgs.msg import Clock
 from cv_bridge import CvBridge
 
 from transformers import AutoImageProcessor, AutoModelForDepthEstimation
@@ -36,6 +37,9 @@ class DepthToPointCloud(Node):
         self.model_size = (
             self.get_parameter("model_size").get_parameter_value().string_value
         )
+        self.use_sim_time = (
+            self.get_parameter("use_sim_time").get_parameter_value().bool_value
+        )
 
         # Validate model_size
         valid_model_sizes = ["Base", "Small", "Large"]
@@ -53,6 +57,8 @@ class DepthToPointCloud(Node):
         self.camera_info_subscriber = self.create_subscription(
             CameraInfo, self.camera_info_topic, self.camera_info_callback, 10
         )
+        self.clock_subscriber = self.create_subscription(
+            Clock, '/clock', self.clock_callback, 10)
         self.pointcloud_publisher = self.create_publisher(
             PointCloud2, self.pointcloud_topic, 10
         )
@@ -89,7 +95,14 @@ class DepthToPointCloud(Node):
         self.cx = None
         self.cy = None
         self.image_callback_count = 0
+        self.sim_time = None
 
+    def clock_callback(self, msg: Clock):
+        if self.use_sim_time:
+            self.sim_time = msg.clock
+        else:
+            self.sim_time = None
+            
     def camera_info_callback(self, msg: CameraInfo):
         if self.camera_info is not None:
             return
@@ -182,7 +195,11 @@ class DepthToPointCloud(Node):
 
         # Create PointCloud2 message
         pointcloud_msg = PointCloud2()
-        pointcloud_msg.header.stamp = self.get_clock().now().to_msg()
+        # Use sim time if enabled and available, else use node clock
+        if self.use_sim_time and self.sim_time is not None:
+            pointcloud_msg.header.stamp = self.sim_time
+        else:
+            pointcloud_msg.header.stamp = self.get_clock().now().to_msg()
         pointcloud_msg.header.frame_id = self.camera_info.header.frame_id
         pointcloud_msg.height = 1
         pointcloud_msg.width = points.shape[0]
