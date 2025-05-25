@@ -1,5 +1,6 @@
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 from sensor_msgs.msg import Image, CameraInfo, PointField, PointCloud2, CompressedImage
 from rosgraph_msgs.msg import Clock
 from cv_bridge import CvBridge
@@ -11,6 +12,7 @@ from PIL import Image as PILImage
 
 import os
 import open3d as o3d
+import time
 
 
 class DepthToPointCloud(Node):
@@ -51,14 +53,20 @@ class DepthToPointCloud(Node):
             )
             rclpy.shutdown()
             return
+        
+        qos_profile = QoSProfile(
+            reliability=QoSReliabilityPolicy.BEST_EFFORT,
+            history=QoSHistoryPolicy.KEEP_LAST,
+            depth=1
+        )
 
         if self.use_compressed:
             self.image_subscriber = self.create_subscription(
-                CompressedImage, self.image_topic, self.image_callback, 10
+                CompressedImage, self.image_topic, self.image_callback, qos_profile
             )
         else:
             self.image_subscriber = self.create_subscription(
-                Image, self.image_topic, self.image_callback, 10
+                Image, self.image_topic, self.image_callback, qos_profile
             )
 
         self.camera_info_subscriber = self.create_subscription(
@@ -145,6 +153,7 @@ class DepthToPointCloud(Node):
         pil_image = PILImage.fromarray(cv_image)
 
         # Preprocess the image and predict depth
+        t0 = time.time()
         inputs = self.image_processor(
             pil_image,
             return_tensors="pt",
@@ -162,10 +171,20 @@ class DepthToPointCloud(Node):
             align_corners=True,
         )
         prediction = prediction.cpu().numpy()
+        t1 = time.time()
+        inference_time = t1 - t0
 
         # Create point cloud
+        t2 = time.time()
         pointcloud: PointCloud2 = self.create_pointcloud(
             pil_image.height, pil_image.width, prediction, cv_image
+        )
+        t3 = time.time()
+        pointcloud_time = t3 - t2
+
+        self.get_logger().info(
+            f"Inference: {inference_time:.3f}s, PointCloud: {pointcloud_time:.3f}s, Points: {pointcloud.width}",
+            throttle_duration_sec=1,
         )
 
         # Publish point cloud
