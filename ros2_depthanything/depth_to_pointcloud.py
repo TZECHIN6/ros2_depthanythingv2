@@ -1,6 +1,6 @@
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Image, CameraInfo, PointField, PointCloud2
+from sensor_msgs.msg import Image, CameraInfo, PointField, PointCloud2, CompressedImage
 from rosgraph_msgs.msg import Clock
 from cv_bridge import CvBridge
 
@@ -16,30 +16,31 @@ import open3d as o3d
 class DepthToPointCloud(Node):
     def __init__(self):
         super().__init__("depth_to_pointcloud")
-        self.declare_parameter("image_topic", "/logi_camera/image_raw")
-        self.declare_parameter("camera_info_topic", "/logi_camera/camera_info")
-        self.declare_parameter("pointcloud_topic", "/logi_camera/pointcloud")
+        self.declare_parameter("namespace", "")
+        self.declare_parameter("image_raw_topic", "image_raw")
+        self.declare_parameter("image_compressed_topic", "image_compressed")
+        self.declare_parameter("camera_info_topic", "camera_info")
+        self.declare_parameter("pointcloud_topic", "pointcloud")
         self.declare_parameter("save_to_ply", False)
         self.declare_parameter("model_size", "Base")  # Large, Base, Small
+        self.declare_parameter("use_compressed", False)
 
-        self.image_topic = (
-            self.get_parameter("image_topic").get_parameter_value().string_value
-        )
-        self.camera_info_topic = (
-            self.get_parameter("camera_info_topic").get_parameter_value().string_value
-        )
-        self.pointcloud_topic = (
-            self.get_parameter("pointcloud_topic").get_parameter_value().string_value
-        )
-        self.save_to_ply = (
-            self.get_parameter("save_to_ply").get_parameter_value().bool_value
-        )
-        self.model_size = (
-            self.get_parameter("model_size").get_parameter_value().string_value
-        )
-        self.use_sim_time = (
-            self.get_parameter("use_sim_time").get_parameter_value().bool_value
-        )
+        self.namespace = self.get_parameter("namespace").get_parameter_value().string_value
+        if self.namespace and not self.namespace.endswith("/"):
+            self.namespace += "/"
+
+        self.use_compressed = self.get_parameter("use_compressed").get_parameter_value().bool_value
+        # Choose the correct image topic based on use_compressed
+        if self.use_compressed:
+            self.image_topic = self.namespace + self.get_parameter("image_compressed_topic").get_parameter_value().string_value
+        else:
+            self.image_topic = self.namespace + self.get_parameter("image_raw_topic").get_parameter_value().string_value
+        
+        self.camera_info_topic = self.namespace + self.get_parameter("camera_info_topic").get_parameter_value().string_value
+        self.pointcloud_topic = self.namespace + self.get_parameter("pointcloud_topic").get_parameter_value().string_value
+        self.save_to_ply = self.get_parameter("save_to_ply").get_parameter_value().bool_value
+        self.model_size = self.get_parameter("model_size").get_parameter_value().string_value
+        self.use_sim_time = self.get_parameter("use_sim_time").get_parameter_value().bool_value
 
         # Validate model_size
         valid_model_sizes = ["Base", "Small", "Large"]
@@ -51,9 +52,15 @@ class DepthToPointCloud(Node):
             rclpy.shutdown()
             return
 
-        self.image_subscriber = self.create_subscription(
-            Image, self.image_topic, self.image_callback, 10
-        )
+        if self.use_compressed:
+            self.image_subscriber = self.create_subscription(
+                CompressedImage, self.image_topic, self.image_callback, 10
+            )
+        else:
+            self.image_subscriber = self.create_subscription(
+                Image, self.image_topic, self.image_callback, 10
+            )
+
         self.camera_info_subscriber = self.create_subscription(
             CameraInfo, self.camera_info_topic, self.camera_info_callback, 10
         )
@@ -129,7 +136,10 @@ class DepthToPointCloud(Node):
         self.image_callback_count += 1
 
         # Convert the ROS Image message to a CV2 image
-        cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="rgb8")
+        if self.use_compressed:
+            cv_image = self.bridge.compressed_imgmsg_to_cv2(msg, desired_encoding="rgb8")
+        else:
+            cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="rgb8")
 
         # Convert the CV2 image to a PIL image
         pil_image = PILImage.fromarray(cv_image)
