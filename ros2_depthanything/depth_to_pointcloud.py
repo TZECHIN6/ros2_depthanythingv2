@@ -15,6 +15,7 @@ import os
 import open3d as o3d
 import time
 
+
 @numba.njit(parallel=True, fastmath=True)
 def pack_points_and_colors(x, y, z, colors):
     n = x.size
@@ -24,8 +25,14 @@ def pack_points_and_colors(x, y, z, colors):
         points[i, 0] = x[i] * z[i]
         points[i, 1] = y[i] * z[i]
         points[i, 2] = z[i]
-        rgbs[i] = (0xFF << 24) | (int(colors[i, 0]) << 16) | (int(colors[i, 1]) << 8) | int(colors[i, 2])
+        rgbs[i] = (
+            (0xFF << 24)
+            | (int(colors[i, 0]) << 16)
+            | (int(colors[i, 1]) << 8)
+            | int(colors[i, 2])
+        )
     return points, rgbs
+
 
 class DepthToPointCloud(Node):
     def __init__(self):
@@ -39,22 +46,48 @@ class DepthToPointCloud(Node):
         self.declare_parameter("model_size", "Base")  # Large, Base, Small
         self.declare_parameter("use_compressed", False)
 
-        self.namespace = self.get_parameter("namespace").get_parameter_value().string_value
+        self.namespace = (
+            self.get_parameter("namespace").get_parameter_value().string_value
+        )
         if self.namespace and not self.namespace.endswith("/"):
             self.namespace += "/"
 
-        self.use_compressed = self.get_parameter("use_compressed").get_parameter_value().bool_value
+        self.use_compressed = (
+            self.get_parameter("use_compressed").get_parameter_value().bool_value
+        )
         # Choose the correct image topic based on use_compressed
         if self.use_compressed:
-            self.image_topic = self.namespace + self.get_parameter("image_compressed_topic").get_parameter_value().string_value
+            self.image_topic = (
+                self.namespace
+                + self.get_parameter("image_compressed_topic")
+                .get_parameter_value()
+                .string_value
+            )
         else:
-            self.image_topic = self.namespace + self.get_parameter("image_raw_topic").get_parameter_value().string_value
-        
-        self.camera_info_topic = self.namespace + self.get_parameter("camera_info_topic").get_parameter_value().string_value
-        self.pointcloud_topic = self.namespace + self.get_parameter("pointcloud_topic").get_parameter_value().string_value
-        self.save_to_ply = self.get_parameter("save_to_ply").get_parameter_value().bool_value
-        self.model_size = self.get_parameter("model_size").get_parameter_value().string_value
-        self.use_sim_time = self.get_parameter("use_sim_time").get_parameter_value().bool_value
+            self.image_topic = (
+                self.namespace
+                + self.get_parameter("image_raw_topic")
+                .get_parameter_value()
+                .string_value
+            )
+
+        self.camera_info_topic = (
+            self.namespace
+            + self.get_parameter("camera_info_topic").get_parameter_value().string_value
+        )
+        self.pointcloud_topic = (
+            self.namespace
+            + self.get_parameter("pointcloud_topic").get_parameter_value().string_value
+        )
+        self.save_to_ply = (
+            self.get_parameter("save_to_ply").get_parameter_value().bool_value
+        )
+        self.model_size = (
+            self.get_parameter("model_size").get_parameter_value().string_value
+        )
+        self.use_sim_time = (
+            self.get_parameter("use_sim_time").get_parameter_value().bool_value
+        )
 
         # Validate model_size
         valid_model_sizes = ["Base", "Small", "Large"]
@@ -65,11 +98,11 @@ class DepthToPointCloud(Node):
             )
             rclpy.shutdown()
             return
-        
+
         qos_profile = QoSProfile(
             reliability=QoSReliabilityPolicy.BEST_EFFORT,
             history=QoSHistoryPolicy.KEEP_LAST,
-            depth=1
+            depth=1,
         )
 
         if self.use_compressed:
@@ -85,7 +118,8 @@ class DepthToPointCloud(Node):
             CameraInfo, self.camera_info_topic, self.camera_info_callback, 10
         )
         self.clock_subscriber = self.create_subscription(
-            Clock, '/clock', self.clock_callback, 10)
+            Clock, "/clock", self.clock_callback, 10
+        )
         self.pointcloud_publisher = self.create_publisher(
             PointCloud2, self.pointcloud_topic, 10
         )
@@ -95,7 +129,9 @@ class DepthToPointCloud(Node):
         self.get_logger().info(f"Using device: {self.device}")
 
         # Load the model and processor
-        model_id = f"depth-anything/Depth-Anything-V2-Metric-Indoor-{self.model_size}-hf"
+        model_id = (
+            f"depth-anything/Depth-Anything-V2-Metric-Indoor-{self.model_size}-hf"
+        )
         self.image_processor = AutoImageProcessor.from_pretrained(
             model_id,
             do_resize=True,  # Enable resizing
@@ -130,7 +166,7 @@ class DepthToPointCloud(Node):
             self.sim_time = msg.clock
         else:
             self.sim_time = None
-            
+
     def camera_info_callback(self, msg: CameraInfo):
         if self.camera_info is not None:
             return
@@ -161,7 +197,9 @@ class DepthToPointCloud(Node):
 
         # Convert the ROS Image message to a CV2 image
         if self.use_compressed:
-            cv_image = self.bridge.compressed_imgmsg_to_cv2(msg, desired_encoding="rgb8")
+            cv_image = self.bridge.compressed_imgmsg_to_cv2(
+                msg, desired_encoding="rgb8"
+            )
         else:
             cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="rgb8")
 
@@ -221,7 +259,11 @@ class DepthToPointCloud(Node):
         h_ds, w_ds = z_ds.shape
 
         # Precompute meshgrid only once for each image size
-        if not hasattr(self, "_meshgrid_cache") or self._meshgrid_cache is None or self._meshgrid_cache["shape"] != (h_ds, w_ds):
+        if (
+            not hasattr(self, "_meshgrid_cache")
+            or self._meshgrid_cache is None
+            or self._meshgrid_cache["shape"] != (h_ds, w_ds)
+        ):
             x_idx = np.arange(w_ds, dtype=np.float32)
             y_idx = np.arange(h_ds, dtype=np.float32)
             x = (x_idx[None, :] - self.cx / ds) / (self.fx / ds)
@@ -254,7 +296,7 @@ class DepthToPointCloud(Node):
             pcd.colors = o3d.utility.Vector3dVector(colors_ply)
             o3d.io.write_point_cloud(
                 os.path.join(
-                    f"/home/thomas/Code/ros2_ws/output/pointcloud_{self.image_callback_count}.ply",
+                    f"/home/thomas/Code/wheeltec_mini_mec_ws/output/pointcloud_{self.image_callback_count}.ply",
                 ),
                 pcd,
             )
