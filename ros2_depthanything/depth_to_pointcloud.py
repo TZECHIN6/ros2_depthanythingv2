@@ -124,6 +124,14 @@ class DepthToPointCloud(Node):
             PointCloud2, self.pointcloud_topic, 10
         )
 
+        self.get_logger().info(f"Subscribed to image topic: {self.image_topic}")
+        self.get_logger().info(
+            f"Subscribed to camera info topic: {self.camera_info_topic}"
+        )
+        self.get_logger().info(
+            f"Publishing point cloud to topic: {self.pointcloud_topic}"
+        )
+
         # Check if CUDA is available
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.get_logger().info(f"Using device: {self.device}")
@@ -225,13 +233,19 @@ class DepthToPointCloud(Node):
             align_corners=True,
         )
         prediction = prediction.cpu().numpy()
+        depth_np = prediction.squeeze()  # Remove batch dimension
         t1 = time.time()
         inference_time = t1 - t0
+
+        # # Apply calibration (replace a and b with your fitted values)
+        a = 0.845984  # <-- set this to your fitted scale
+        b = -0.425169  # <-- set this to your fitted offset
+        depth_np = a * depth_np + b
 
         # Create point cloud
         t2 = time.time()
         pointcloud: PointCloud2 = self.create_pointcloud(
-            pil_image.height, pil_image.width, prediction, cv_image
+            pil_image.height, pil_image.width, depth_np, cv_image
         )
         t3 = time.time()
         pointcloud_time = t3 - t2
@@ -289,7 +303,7 @@ class DepthToPointCloud(Node):
         points_with_color[:, 3] = rgbs.view(np.float32)
 
         # Save to PLY if needed (optional, not downsampled)
-        if self.image_callback_count in (1, 10, 20) and self.save_to_ply:
+        if self.image_callback_count in (10, 20) and self.save_to_ply:
             colors_ply = colors_flat / 255.0
             pcd = o3d.geometry.PointCloud()
             pcd.points = o3d.utility.Vector3dVector(points_with_color[:, :3])
@@ -299,6 +313,9 @@ class DepthToPointCloud(Node):
                     f"/home/thomas/Code/wheeltec_mini_mec_ws/output/pointcloud_{self.image_callback_count}.ply",
                 ),
                 pcd,
+            )
+            self.get_logger().info(
+                f"Saved point cloud to PLY file: pointcloud_{self.image_callback_count}.ply."
             )
 
         # Create PointCloud2 message
