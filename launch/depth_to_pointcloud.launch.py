@@ -10,32 +10,12 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "namespace",
                 default_value="",
-                description="Namespace for topics (without leading or trailing /)",
+                description="Namespace for node"
             ),
             DeclareLaunchArgument(
-                "image_raw_topic",
-                default_value="image_raw",
-                description="Raw image topic name",
-            ),
-            DeclareLaunchArgument(
-                "image_compressed_topic",
-                default_value="image_compressed",
-                description="Compressed image topic name",
-            ),
-            DeclareLaunchArgument(
-                "use_compressed",
-                default_value="False",
-                description="Use compressed image topic",
-            ),
-            DeclareLaunchArgument(
-                "camera_info_topic",
-                default_value="camera_info",
-                description="Camera info topic name",
-            ),
-            DeclareLaunchArgument(
-                "pointcloud_topic",
-                default_value="pointcloud",
-                description="Publish Pointcloud topic name",
+                "image_transport",
+                default_value="raw",
+                description="Image transport type (raw, compressed)",
             ),
             DeclareLaunchArgument(
                 "model_size",
@@ -48,26 +28,29 @@ def generate_launch_description():
                 description="Save pointcloud to PLY file",
             ),
             DeclareLaunchArgument(
+                "downsample",
+                default_value="3",
+                description="Downsample factor for pointcloud",
+            ),
+            DeclareLaunchArgument(
                 "use_sim_time", default_value="False", description="Use simulation time"
             ),
             Node(
                 package="ros2_depthanything",
                 executable="depth_to_pointcloud",
                 name="depth_to_pointcloud",
+                namespace=LaunchConfiguration("namespace"),
                 output="screen",
+                remappings=[
+                    ("image", "image_compressed"),
+                    ("camera_info", "camera_info"),
+                    ("pointcloud", "pointcloud"),
+                ],
                 parameters=[
-                    {"namespace": LaunchConfiguration("namespace")},
-                    {"image_raw_topic": LaunchConfiguration("image_raw_topic")},
-                    {
-                        "image_compressed_topic": LaunchConfiguration(
-                            "image_compressed_topic"
-                        )
-                    },
-                    {"use_compressed": LaunchConfiguration("use_compressed")},
-                    {"camera_info_topic": LaunchConfiguration("camera_info_topic")},
-                    {"pointcloud_topic": LaunchConfiguration("pointcloud_topic")},
+                    {"image_transport": LaunchConfiguration("image_transport")},
                     {"save_to_ply": LaunchConfiguration("save_to_ply")},
                     {"model_size": LaunchConfiguration("model_size")},
+                    {"downsample": LaunchConfiguration("downsample")},
                     {"use_sim_time": LaunchConfiguration("use_sim_time")},
                 ],
             ),
