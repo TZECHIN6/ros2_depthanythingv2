@@ -6,21 +6,23 @@ from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 from PIL import Image as PILImage
 import os
 import open3d as o3d
+import math
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 output_dir = os.path.join(script_dir, "output")
-input_image_path = os.path.join(
-    script_dir, "input", "frame0000_rect.jpg"
-)
-output_depth_path = os.path.join(output_dir, "frame0000_rect_depth.npy")
+input_image_path = os.path.join(script_dir, "input", "frame0001.jpg")
+output_depth_path = os.path.join(output_dir, "frame0001.npy")
 
 # Create the input directory if it doesn't exist
 os.makedirs(output_dir, exist_ok=True)
 
-focal_length_x = 719.33977
-focal_length_y = 718.85889
+focal_length_x = 605.00671
+focal_length_y = 607.04704
+cx = 268.86013
+cy = 239.53292
 save_numpy = True
 save_ply = True
+
 
 def save_raw_depth(depth_array, output_depth_path):
     """
@@ -28,6 +30,7 @@ def save_raw_depth(depth_array, output_depth_path):
     """
     np.save(output_depth_path, depth_array)
     print(f"Raw depth saved to {output_depth_path}")
+
 
 def save_ply_file(depth_array, rgb_image, output_dir, filename):
     """
@@ -37,8 +40,8 @@ def save_ply_file(depth_array, rgb_image, output_dir, filename):
     width = depth_array.shape[1]
     height = depth_array.shape[0]
     x, y = np.meshgrid(np.arange(width), np.arange(height))
-    x = (x - width / 2) / focal_length_x
-    y = (y - height / 2) / focal_length_y
+    x = (x - cx) / focal_length_x
+    y = (y - cy) / focal_length_y
     z = np.squeeze(depth_np)
     points = np.stack((np.multiply(x, z), np.multiply(y, z), z), axis=-1).reshape(-1, 3)
     colors = np.array(rgb_image).reshape(-1, 3) / 255.0
@@ -47,9 +50,58 @@ def save_ply_file(depth_array, rgb_image, output_dir, filename):
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(points)
     pcd.colors = o3d.utility.Vector3dVector(colors)
-    o3d.io.write_point_cloud(os.path.join(output_dir, os.path.splitext(os.path.basename(filename))[0] + ".ply"), pcd)
+    o3d.io.write_point_cloud(
+        os.path.join(
+            output_dir,
+            os.path.splitext(os.path.basename(filename))[0] + "_camera_info.ply",
+        ),
+        pcd,
+    )
     print(f"PLY file saved to {output_dir}")
-    
+
+
+def save_ply_file_fov(depth_array, rgb_image, output_dir, filename, fovx_deg=65):
+    """
+    Save the depth map as a PLY file using FOV-based projection.
+    """
+    height, width = depth_array.shape
+    AR = width / height
+    fovx = math.radians(fovx_deg)
+    # Normalize pixel coordinates to [0, 1]
+    x_idx = np.arange(width)
+    y_idx = np.arange(height)
+    x_norm = x_idx / (width - 1)
+    y_norm = y_idx / (height - 1)
+    x_norm_grid, y_norm_grid = np.meshgrid(x_norm, y_norm)
+
+    D = depth_array  # Already calibrated
+
+    # Compute 3D coordinates
+    x_3d = D * math.tan(0.5 * fovx) * (x_norm_grid - 0.5) * 2
+    y_3d = -D * math.tan(0.5 * fovx / AR) * (0.5 - y_norm_grid) * 2
+    z_3d = D
+
+    points = np.stack((x_3d, y_3d, z_3d), axis=-1).reshape(-1, 3)
+    colors = np.array(rgb_image).reshape(-1, 3) / 255.0
+
+    # Remove points where D is nan or <= 0
+    valid = np.isfinite(z_3d).ravel() & (z_3d.ravel() > 0)
+    points = points[valid]
+    colors = colors[valid]
+
+    # Save as PLY
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(points)
+    pcd.colors = o3d.utility.Vector3dVector(colors)
+    o3d.io.write_point_cloud(
+        os.path.join(
+            output_dir, os.path.splitext(os.path.basename(filename))[0] + "_fov.ply"
+        ),
+        pcd,
+    )
+    print(f"PLY file (FOV projection) saved to {output_dir}")
+
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Load the model and processor
@@ -105,17 +157,19 @@ inference_time = t1 - t0
 depth_np = prediction.squeeze()  # Remove batch dimension
 
 # Apply calibration (replace a and b with your fitted values)
-# a = 0.845984  # <-- set this to your fitted scale
-# b = -0.425169  # <-- set this to your fitted offset
-a = 0.729706
-b = -0.162160
+a = 0.700360
+b = -0.498511
 depth_np = a * depth_np + b
+
+# Mask invalid (non-positive) depths
+depth_np[depth_np <= 0] = np.nan
 
 if save_numpy:
     save_raw_depth(depth_np, output_depth_path)
 if save_ply:
     filename = os.path.basename(input_image_path)
     save_ply_file(depth_np, pil_image, output_dir, filename)
+    save_ply_file_fov(depth_np, pil_image, output_dir, filename, fovx_deg=65)
 
 depth_display = cv2.normalize(depth_np, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
 

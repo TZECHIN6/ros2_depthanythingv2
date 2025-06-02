@@ -10,7 +10,7 @@ input_image_path = os.path.join(input_dir, "captured_image_wheeltec_640x480.jpg"
 os.makedirs(input_dir, exist_ok=True)
 
 # Initialize the USB camera (0 is usually the default camera)
-cap = cv2.VideoCapture(2)
+cap = cv2.VideoCapture(0)
 
 # Set camera resolution to 640x480
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
