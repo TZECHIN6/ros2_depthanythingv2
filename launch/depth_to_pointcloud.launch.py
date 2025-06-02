@@ -14,7 +14,7 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "image_transport",
-                default_value="raw",
+                default_value="compressed",
                 description="Image transport type (raw, compressed)",
             ),
             DeclareLaunchArgument(
@@ -33,6 +33,16 @@ def generate_launch_description():
                 description="Downsample factor for pointcloud",
             ),
             DeclareLaunchArgument(
+                "projection_method",
+                default_value="fov",
+                description="Projection method for pointcloud (camera_info or fov)",
+            ),
+            DeclareLaunchArgument(
+                "fovx_deg",
+                default_value="65.0",
+                description="Horizontal field of view in degrees (used if projection_method is fov)",
+            ),
+            DeclareLaunchArgument(
                 "use_sim_time", default_value="False", description="Use simulation time"
             ),
             Node(
@@ -42,7 +52,7 @@ def generate_launch_description():
                 namespace=LaunchConfiguration("namespace"),
                 output="screen",
                 remappings=[
-                    ("image", "image_compressed"),
+                    ("image", "/image_rect/compressed"),
                     ("camera_info", "camera_info"),
                     ("pointcloud", "pointcloud"),
                 ],
@@ -51,6 +61,8 @@ def generate_launch_description():
                     {"save_to_ply": LaunchConfiguration("save_to_ply")},
                     {"model_size": LaunchConfiguration("model_size")},
                     {"downsample": LaunchConfiguration("downsample")},
+                    {"projection_method": LaunchConfiguration("projection_method")},
+                    {"fovx_deg": LaunchConfiguration("fovx_deg")},
                     {"use_sim_time": LaunchConfiguration("use_sim_time")},
                 ],
             ),

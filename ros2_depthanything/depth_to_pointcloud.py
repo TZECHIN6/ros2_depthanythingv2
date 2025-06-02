@@ -12,7 +12,7 @@ from PIL import Image as PILImage
 import os
 import open3d as o3d
 import time
-
+import math
 
 @numba.njit(parallel=True, fastmath=True)
 def pack_points_and_colors(x, y, z, colors):
@@ -40,6 +40,8 @@ class DepthToPointCloud(Node):
         self.declare_parameter("ply_output_dir", "/tmp")
         self.declare_parameter("model_size", "Base")  # Large, Base, Small
         self.declare_parameter("downsample", 3)
+        self.declare_parameter("projection_method", "camera_info")  # camera_info, fov
+        self.declare_parameter("fovx_deg", 65.0)  # Only used if projection_method is fov
 
         self.image_transport = self.get_parameter("image_transport").get_parameter_value().string_value
         self.save_to_ply = self.get_parameter("save_to_ply").get_parameter_value().bool_value
@@ -47,6 +49,8 @@ class DepthToPointCloud(Node):
         self.model_size = self.get_parameter("model_size").get_parameter_value().string_value
         self.use_sim_time = self.get_parameter("use_sim_time").get_parameter_value().bool_value
         self.downsample = self.get_parameter("downsample").get_parameter_value().integer_value
+        self.projection_method = self.get_parameter("projection_method").get_parameter_value().string_value
+        self.fovx_deg = self.get_parameter("fovx_deg").get_parameter_value().double_value
 
         # Validate model_size
         valid_model_sizes = ["Base", "Small", "Large"]
@@ -54,6 +58,16 @@ class DepthToPointCloud(Node):
             self.get_logger().error(
                 f"Invalid model_size parameter: '{self.model_size}'. "
                 f"Valid options are: {valid_model_sizes}. Node will not start."
+            )
+            rclpy.shutdown()
+            return
+
+        # Validate projection_method
+        valid_projection_methods = ["camera_info", "fov"]
+        if self.projection_method not in valid_projection_methods:
+            self.get_logger().error(
+                f"Invalid projection_method parameter: '{self.projection_method}'. "
+                f"Valid options are: {valid_projection_methods}. Node will not start."
             )
             rclpy.shutdown()
             return
@@ -90,6 +104,7 @@ class DepthToPointCloud(Node):
         self.get_logger().info(f"Subscribed to image topic: {self.resolve_topic_name('image')}")
         self.get_logger().info(f"Subscribed to camera info topic: {self.resolve_topic_name('camera_info')}")
         self.get_logger().info(f"Publishing pointcloud to topic: {self.resolve_topic_name('pointcloud')}")
+        self.get_logger().info(f"Projection method set to: {self.projection_method}")
 
         # Check if CUDA is available
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -125,6 +140,8 @@ class DepthToPointCloud(Node):
         self.fy = None
         self.cx = None
         self.cy = None
+        self.image_width = None
+        self.image_height = None
         self.image_callback_count = 0
         self.sim_time = None
 
@@ -142,8 +159,11 @@ class DepthToPointCloud(Node):
         self.fy = msg.k[4]  # Focal length y
         self.cx = msg.k[2]  # Principal point x
         self.cy = msg.k[5]  # Principal point y
+        self.image_width = msg.width
+        self.image_height = msg.height
         self.get_logger().info(f"Focal length (fx,fy): ({self.fx},{self.fy})")
         self.get_logger().info(f"Optical center (cx,cy): ({self.cx},{self.cy})")
+        self.get_logger().info(f"Image size: {self.image_width}x{self.image_height}")
 
         # Precompute meshgrid for the expected image size
         self._meshgrid_cache = None  # Reset cache
@@ -193,12 +213,12 @@ class DepthToPointCloud(Node):
         t1 = time.time()
         inference_time = t1 - t0
 
-        # # Apply calibration (replace a and b with your fitted values)
-        # a = 0.845984  # <-- set this to your fitted scale
-        # b = -0.425169  # <-- set this to your fitted offset
-        a = 0.729706
-        b = -0.162160
+        # Apply calibration (replace a and b with your fitted values)
+        a = 0.700360
+        b = -0.498511
         depth_np = a * depth_np + b
+        # Mask invalid (non-positive) depths
+        depth_np[depth_np <= 0] = np.nan
 
         # Create point cloud
         t2 = time.time()
@@ -215,27 +235,42 @@ class DepthToPointCloud(Node):
 
     def create_pointcloud(self, depth_np, color_image):
         z = np.squeeze(depth_np)
-
-        # Downsample
         ds = self.downsample
         z_ds = z[::ds, ::ds]
         color_ds = color_image[::ds, ::ds, :]
         h_ds, w_ds = z_ds.shape
 
-        # Precompute meshgrid only once for each image size
+        # Precompute meshgrid only once for each image size and projection method
+        cache_key = (self.projection_method, h_ds, w_ds, self.fovx_deg if self.projection_method == "fov" else None)
         if (
             not hasattr(self, "_meshgrid_cache")
             or self._meshgrid_cache is None
-            or self._meshgrid_cache["shape"] != (h_ds, w_ds)
+            or self._meshgrid_cache.get("key") != cache_key
         ):
-            x_idx = np.arange(w_ds, dtype=np.float32)
-            y_idx = np.arange(h_ds, dtype=np.float32)
-            x = (x_idx[None, :] - self.cx / ds) / (self.fx / ds)
-            y = (y_idx[:, None] - self.cy / ds) / (self.fy / ds)
+            self.get_logger().info("Creating new meshgrid cache for point cloud projection.")
+            if self.projection_method == "fov":
+                AR = self.image_width / self.image_height
+                # For downsampled grid:
+                x_idx = np.arange(w_ds)
+                y_idx = np.arange(h_ds)
+                x_norm = x_idx / (w_ds - 1)
+                y_norm = y_idx / (h_ds - 1)
+                x_norm_grid, y_norm_grid = np.meshgrid(x_norm, y_norm)
+                # FOV projection
+                fovx = math.radians(self.fovx_deg)
+                x = (np.tan(0.5 * fovx) * (x_norm_grid - 0.5) * 2).astype(np.float32)
+                y = (-np.tan(0.5 * fovx / AR) * (0.5 - y_norm_grid) * 2).astype(np.float32)
+            elif self.projection_method == "camera_info":
+                x_idx = np.arange(w_ds, dtype=np.float32)
+                y_idx = np.arange(h_ds, dtype=np.float32)
+                x = (x_idx[None, :] - self.cx / ds) / (self.fx / ds)
+                y = (y_idx[:, None] - self.cy / ds) / (self.fy / ds)
+                x = np.tile(x, (h_ds, 1))
+                y = np.tile(y, (1, w_ds))
             self._meshgrid_cache = {
-                "shape": (h_ds, w_ds),
-                "x": np.tile(x, (h_ds, 1)),
-                "y": np.tile(y, (1, w_ds)),
+                "key": cache_key,
+                "x": x,
+                "y": y,
             }
         x = self._meshgrid_cache["x"]
         y = self._meshgrid_cache["y"]
@@ -253,7 +288,7 @@ class DepthToPointCloud(Node):
         points_with_color[:, 3] = rgbs.view(np.float32)
 
         # Save to PLY if needed
-        if self.image_callback_count in (10, 20) and self.save_to_ply:
+        if self.image_callback_count == 10 and self.save_to_ply:
             colors_ply = colors_flat / 255.0
             pcd = o3d.geometry.PointCloud()
             pcd.points = o3d.utility.Vector3dVector(points_with_color[:, :3])
@@ -280,7 +315,7 @@ class DepthToPointCloud(Node):
         pointcloud_msg.header.frame_id = self.camera_info.header.frame_id
         pointcloud_msg.height = 1
         pointcloud_msg.width = points_with_color.shape[0]
-        pointcloud_msg.is_dense = True
+        pointcloud_msg.is_dense = False
         pointcloud_msg.is_bigendian = False
         pointcloud_msg.fields = [
             PointField(name="x", offset=0, datatype=PointField.FLOAT32, count=1),
