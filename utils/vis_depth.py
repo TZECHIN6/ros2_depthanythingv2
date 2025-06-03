@@ -10,8 +10,8 @@ import math
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 output_dir = os.path.join(script_dir, "output")
-input_image_path = os.path.join(script_dir, "input", "frame0001.jpg")
-output_depth_path = os.path.join(output_dir, "frame0001.npy")
+input_image_path = os.path.join(script_dir, "input", "frame0002.jpg")
+output_depth_path = os.path.join(output_dir, "frame0002.npy")
 
 # Create the input directory if it doesn't exist
 os.makedirs(output_dir, exist_ok=True)
@@ -42,7 +42,7 @@ def save_ply_file(depth_array, rgb_image, output_dir, filename):
     x, y = np.meshgrid(np.arange(width), np.arange(height))
     x = (x - cx) / focal_length_x
     y = (y - cy) / focal_length_y
-    z = np.squeeze(depth_np)
+    z = np.squeeze(depth_array)
     points = np.stack((np.multiply(x, z), np.multiply(y, z), z), axis=-1).reshape(-1, 3)
     colors = np.array(rgb_image).reshape(-1, 3) / 255.0
 
@@ -50,14 +50,14 @@ def save_ply_file(depth_array, rgb_image, output_dir, filename):
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(points)
     pcd.colors = o3d.utility.Vector3dVector(colors)
+    out_file = os.path.join(
+            output_dir, filename + "_camera_info.ply",
+        )
     o3d.io.write_point_cloud(
-        os.path.join(
-            output_dir,
-            os.path.splitext(os.path.basename(filename))[0] + "_camera_info.ply",
-        ),
+        out_file,
         pcd,
     )
-    print(f"PLY file saved to {output_dir}")
+    print(f"PLY file saved to {out_file}")
 
 
 def save_ply_file_fov(depth_array, rgb_image, output_dir, filename, fovx_deg=65):
@@ -93,13 +93,14 @@ def save_ply_file_fov(depth_array, rgb_image, output_dir, filename, fovx_deg=65)
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(points)
     pcd.colors = o3d.utility.Vector3dVector(colors)
+    out_file = os.path.join(
+        output_dir, filename + "_fov.ply"
+    )
     o3d.io.write_point_cloud(
-        os.path.join(
-            output_dir, os.path.splitext(os.path.basename(filename))[0] + "_fov.ply"
-        ),
+        out_file,
         pcd,
     )
-    print(f"PLY file (FOV projection) saved to {output_dir}")
+    print(f"PLY file (FOV projection) saved to {out_file}")
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -122,7 +123,7 @@ model = AutoModelForDepthEstimation.from_pretrained(
     model_id,
     device_map="auto",
     depth_estimation_type="metric",
-    max_depth=20.0,
+    max_depth=1.0,
 )
 print(f"Model loaded successfully. Model ID: {model_id}")
 
@@ -157,19 +158,21 @@ inference_time = t1 - t0
 depth_np = prediction.squeeze()  # Remove batch dimension
 
 # Apply calibration (replace a and b with your fitted values)
-a = 0.700360
-b = -0.498511
-depth_np = a * depth_np + b
-
-# Mask invalid (non-positive) depths
-depth_np[depth_np <= 0] = np.nan
+a = 12.597215
+b = -0.238963
+new_depth_np = a * depth_np + b
 
 if save_numpy:
     save_raw_depth(depth_np, output_depth_path)
 if save_ply:
-    filename = os.path.basename(input_image_path)
-    save_ply_file(depth_np, pil_image, output_dir, filename)
-    save_ply_file_fov(depth_np, pil_image, output_dir, filename, fovx_deg=65)
+    filename = os.path.splitext(os.path.basename(input_image_path))[0]
+    filename1 = filename + "_raw_depth"
+    filename2 = filename + "_cali_depth"
+    print(filename1, filename2)
+    save_ply_file(depth_np, pil_image, output_dir, filename1)
+    save_ply_file(new_depth_np, pil_image, output_dir, filename2)
+    save_ply_file_fov(depth_np, pil_image, output_dir, filename1, fovx_deg=65)
+    save_ply_file_fov(new_depth_np, pil_image, output_dir, filename2, fovx_deg=65)
 
 depth_display = cv2.normalize(depth_np, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
 

@@ -129,7 +129,7 @@ class DepthToPointCloud(Node):
             model_id,
             device_map="auto",
             depth_estimation_type="metric",
-            max_depth=20.0,                      # 20 for indoor, 80 for outdoor
+            max_depth=1.0,                      # 20 for indoor, 80 for outdoor
         )
         self.get_logger().info(f"Model loaded successfully. Model ID: {model_id}")
         self.get_logger().info(f"Downsample factor set to: {self.downsample}")
@@ -214,8 +214,8 @@ class DepthToPointCloud(Node):
         inference_time = t1 - t0
 
         # Apply calibration (replace a and b with your fitted values)
-        a = 0.700360
-        b = -0.498511
+        a = 12.597215
+        b = -0.238963
         depth_np = a * depth_np + b
         # Mask invalid (non-positive) depths
         depth_np[depth_np <= 0] = np.nan
