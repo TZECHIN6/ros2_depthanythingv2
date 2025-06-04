@@ -42,6 +42,7 @@ class DepthToPointCloud(Node):
         self.declare_parameter("downsample", 3)
         self.declare_parameter("projection_method", "camera_info")  # camera_info, fov
         self.declare_parameter("fovx_deg", 65.0)  # Only used if projection_method is fov
+        self.declare_parameter("max_depth", 20.0)  # Max depth for metric estimation
 
         self.image_transport = self.get_parameter("image_transport").get_parameter_value().string_value
         self.save_to_ply = self.get_parameter("save_to_ply").get_parameter_value().bool_value
@@ -51,6 +52,7 @@ class DepthToPointCloud(Node):
         self.downsample = self.get_parameter("downsample").get_parameter_value().integer_value
         self.projection_method = self.get_parameter("projection_method").get_parameter_value().string_value
         self.fovx_deg = self.get_parameter("fovx_deg").get_parameter_value().double_value
+        self.max_depth = self.get_parameter("max_depth").get_parameter_value().double_value
 
         # Validate model_size
         valid_model_sizes = ["Base", "Small", "Large"]
@@ -105,6 +107,8 @@ class DepthToPointCloud(Node):
         self.get_logger().info(f"Subscribed to camera info topic: {self.resolve_topic_name('camera_info')}")
         self.get_logger().info(f"Publishing pointcloud to topic: {self.resolve_topic_name('pointcloud')}")
         self.get_logger().info(f"Projection method set to: {self.projection_method}")
+        self.get_logger().info(f"Downsample factor set to: {self.downsample}")
+        self.get_logger().info(f"Max depth set to: {self.max_depth} meters")
 
         # Check if CUDA is available
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -129,10 +133,9 @@ class DepthToPointCloud(Node):
             model_id,
             device_map="auto",
             depth_estimation_type="metric",
-            max_depth=1.0,                      # 20 for indoor, 80 for outdoor
+            max_depth=self.max_depth,             # 20 for indoor, 80 for outdoor
         )
         self.get_logger().info(f"Model loaded successfully. Model ID: {model_id}")
-        self.get_logger().info(f"Downsample factor set to: {self.downsample}")
 
         self.bridge = CvBridge()
         self.camera_info = None
@@ -214,11 +217,11 @@ class DepthToPointCloud(Node):
         inference_time = t1 - t0
 
         # Apply calibration (replace a and b with your fitted values)
-        a = 12.597215
-        b = -0.238963
-        depth_np = a * depth_np + b
-        # Mask invalid (non-positive) depths
-        depth_np[depth_np <= 0] = np.nan
+        # Least squares calibration values under testing, do not use in production
+        # a = 12.597215
+        # b = -0.238963
+        # depth_np = a * depth_np + b
+        # depth_np[depth_np <= 0] = np.nan
 
         # Create point cloud
         t2 = time.time()
@@ -227,7 +230,7 @@ class DepthToPointCloud(Node):
         pointcloud_time = t3 - t2
 
         self.get_logger().info(
-            f"Inference: {inference_time:.3f}s, PointCloud: {pointcloud_time:.3f}s, Points: {pointcloud.width}"
+            f"Inference: {inference_time:.3f}s, PointCloud: {pointcloud_time:.3f}s, Points: {pointcloud.width}", throttle_duration_sec=1.0
         )
 
         # Publish point cloud
