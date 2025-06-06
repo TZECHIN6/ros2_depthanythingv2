@@ -20,6 +20,8 @@
   <depend>python3-open3d</depend>
   <depend>python3-pillow</depend>
   <depend>python3-transformers</depend>
+  <depend>python3-accelerator</depend>
+  <depend>python3-numba</depend>
 
   <exec_depend>ros2launch</exec_depend>
 
